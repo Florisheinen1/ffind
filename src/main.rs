@@ -1,6 +1,7 @@
 use clap::{
     builder::TypedValueParser, error::ContextKind, Arg, ArgAction, ArgGroup, Command, Error,
 };
+use std::env;
 
 use std::path::{PathBuf};
 
@@ -84,8 +85,11 @@ impl Walkable for Directory {
 
         // First, check the name of the folder itself
         if include_filenames {
+            let try_name = self.path.file_name();
+            dbg!(&self.path.parent(), &try_name);
+
             let dir_name = self
-                .path
+                .path.as_path()
                 .file_name()
                 .expect("Failed to get folder name")
                 .to_string_lossy();
@@ -176,8 +180,12 @@ enum Occurrence {
 fn get_occurrences_in_file_contents(file: &File, keyword: &str) -> Vec<Occurrence> {
     let mut occurrences: Vec<Occurrence> = vec![];
 
-    let contents =
-        fs::read_to_string(file.path.clone()).expect("Should have been able to read the file");
+    let contents = if let Ok(c) = fs::read_to_string(file.path.clone()) {
+        c
+    } else {
+        println!("Skipping search in file: {:?}", file.path); // TODO: Resolve this
+        return vec![];
+    };
 
     let mut start_it = contents.chars();
     let mut line_counter: usize = 0;
@@ -219,6 +227,10 @@ fn get_occurrences_in_file_contents(file: &File, keyword: &str) -> Vec<Occurrenc
     }
 
     return occurrences;
+}
+
+fn get_current_directory() -> Directory {
+    Directory::from(env::current_dir().expect("Failed to get current directory")).expect("Failed to get current directory")
 }
 
 fn main() {
@@ -272,34 +284,21 @@ fn main() {
         .get_matches();
 
     let keyword = cmd_matches.get_one::<String>("keyword").expect("Required");
-    println!("Keyword: {:?}", keyword);
     let should_recurse = cmd_matches.get_one::<bool>("recurse").expect("Required");
-    println!("Should recurse: {:?}", should_recurse);
     let include_filenames = cmd_matches.get_one::<bool>("names").expect("Required");
-    println!("Look for names: {:?}", include_filenames);
     let include_file_contents = cmd_matches.get_one::<bool>("contents").expect("Required");
-    println!("Look for content: {:?}", include_file_contents);
 
-    let include_folder_children = cmd_matches
+    let search_directory = cmd_matches
         .get_one::<Directory>("directory")
         .expect("Required");
-    println!("Look in folder: {:?}", include_folder_children);
+    let search_directory = get_current_directory();
 
-    println!();
-
-    // let a = PathBuf::from("src/main.rs");
-    let occurrences = cmd_matches
-        .get_one::<Directory>("directory")
-        .expect("Required")
-        .walk(*should_recurse, *include_filenames, &keyword);
+    let occurrences = search_directory.walk(*should_recurse, *include_filenames, &keyword);
 
     for occurrence in occurrences {
         println!("Found: {:?}", occurrence)
     }
 
-    // println!("Is file: {}", a.is_file());
-    // println!("Defualt pathbuf: {}", PathBuf::from("src//* fef main.rs").display());
-    // println!("Default pathbuf is folder: {}", PathBuf::from("./").is_dir());
 }
 
 // flo
