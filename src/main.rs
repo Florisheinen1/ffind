@@ -1,9 +1,8 @@
 use clap::{
     builder::TypedValueParser, error::ContextKind, Arg, ArgAction, ArgGroup, Command, Error,
 };
-use std::env;
 
-use std::path::{PathBuf};
+use std::path::PathBuf;
 
 use std::fs;
 
@@ -72,7 +71,8 @@ struct Directory {
 impl Directory {
     fn from(path: PathBuf) -> Result<Directory, &'static str> {
         if path.is_dir() {
-            Ok(Directory { path })
+			let canonicalized = path.canonicalize().expect("Could not canonicalize path");
+            Ok(Directory { path: canonicalized })
         } else {
             Err("Nope")
         }
@@ -80,14 +80,11 @@ impl Directory {
 }
 
 impl Walkable for Directory {
-    fn walk(&self, recurse: bool, include_filenames: bool, keyword: &str) -> Vec<Occurrence> {
+    fn walk(&self, recurse: bool, include_filenames: bool, include_file_contents: bool, keyword: &str) -> Vec<Occurrence> {
         let mut occurrences: Vec<Occurrence> = vec![];
 
         // First, check the name of the folder itself
         if include_filenames {
-            let try_name = self.path.file_name();
-            dbg!(&self.path.parent(), &try_name);
-
             let dir_name = self
                 .path.as_path()
                 .file_name()
@@ -102,30 +99,32 @@ impl Walkable for Directory {
         }
 
         // Then, walk each child in this folder
-        for x in self.path.read_dir().expect("Failed to open directory") {
-            if let Ok(entry) = x {
-                // If we recurse, also walk the children directories
-                if recurse {
-                    if let Ok(dir) = Directory::from(entry.path()) {
-                        occurrences.extend(dir.walk(recurse, include_filenames, keyword));
-                        continue;
-                    }
-                }
-
-                // Walk the children files
-                if let Ok(file) = File::from(entry.path()) {
-                    occurrences.extend(file.walk(recurse, include_filenames, keyword));
-                }
-            } else {
-                println!("Failed to aquire item in directory");
-            }
-        }
+		if let Ok(dir_entry) = self.path.read_dir() {
+			for x in dir_entry {
+				if let Ok(entry) = x {
+					// If we recurse, also walk the children directories
+					if recurse {
+						if let Ok(dir) = Directory::from(entry.path()) {
+							occurrences.extend(dir.walk(recurse, include_filenames, include_file_contents, keyword));
+							continue;
+						}
+					}
+	
+					// Walk the children files
+					if let Ok(file) = File::from(entry.path()) {
+						occurrences.extend(file.walk(recurse, include_filenames, include_file_contents, keyword));
+					}
+				} else {
+					println!("Failed to aquire item in directory");
+				}
+			}
+		}
         return occurrences;
     }
 }
 
 trait Walkable {
-    fn walk(&self, recurse: bool, include_filenames: bool, keyword: &str) -> Vec<Occurrence>;
+    fn walk(&self, recurse: bool, include_filenames: bool, include_file_contents: bool, keyword: &str) -> Vec<Occurrence>;
 }
 
 struct File {
@@ -142,7 +141,7 @@ impl File {
 }
 
 impl Walkable for File {
-    fn walk(&self, _: bool, include_filenames: bool, keyword: &str) -> Vec<Occurrence> {
+    fn walk(&self, _: bool, include_filenames: bool, include_file_contents: bool, keyword: &str) -> Vec<Occurrence> {
         let mut occurrences: Vec<Occurrence> = vec![];
 
         if include_filenames {
@@ -154,8 +153,10 @@ impl Walkable for File {
                 })
             }
         }
-
-        occurrences.extend(get_occurrences_in_file_contents(self, keyword));
+		
+		if include_file_contents {
+			occurrences.extend(get_occurrences_in_file_contents(self, keyword));
+		}
 
         return occurrences;
     }
@@ -183,7 +184,7 @@ fn get_occurrences_in_file_contents(file: &File, keyword: &str) -> Vec<Occurrenc
     let contents = if let Ok(c) = fs::read_to_string(file.path.clone()) {
         c
     } else {
-        println!("Skipping search in file: {:?}", file.path); // TODO: Resolve this
+        // println!("Skipping search in file: {:?}", file.path); // TODO: Resolve this
         return vec![];
     };
 
@@ -227,10 +228,6 @@ fn get_occurrences_in_file_contents(file: &File, keyword: &str) -> Vec<Occurrenc
     }
 
     return occurrences;
-}
-
-fn get_current_directory() -> Directory {
-    Directory::from(env::current_dir().expect("Failed to get current directory")).expect("Failed to get current directory")
 }
 
 fn main() {
@@ -291,12 +288,16 @@ fn main() {
     let search_directory = cmd_matches
         .get_one::<Directory>("directory")
         .expect("Required");
-    let search_directory = get_current_directory();
 
-    let occurrences = search_directory.walk(*should_recurse, *include_filenames, &keyword);
+	println!("Search dir: {:?}", search_directory);
+
+    let occurrences = search_directory.walk(*should_recurse, *include_filenames, *include_file_contents, &keyword);
 
     for occurrence in occurrences {
-        println!("Found: {:?}", occurrence)
+		match occurrence {
+			Occurrence::FileName { matching_text, path } => println!("'{}' found in filename: '{:?}'", matching_text, path),
+			Occurrence::FileContent { matching_text, path, line_number } => println!("'{}' found on line {} in file: '{:?}'", matching_text, line_number, path)
+		}
     }
 
 }
